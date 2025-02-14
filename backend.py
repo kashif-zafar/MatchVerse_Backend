@@ -2,24 +2,51 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import xgboost as xgb
+import requests
+import os
 from collections import Counter
 from sklearn.preprocessing import LabelEncoder
-import os
 
 app = FastAPI()
 
-# Enable CORS (Modify if hosted elsewhere)
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Change to your frontend URL if needed
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Load user metadata (Handle file path for Vercel)
-users_file = os.path.join(os.path.dirname(__file__), "users.csv")
-users_df = pd.read_csv(users_file)
+# Google Drive file IDs
+USERS_CSV_ID = "15jVGtI8f9heb3W944skG8_qJajiFDaD0"
+MODEL_JSON_ID = "1hZcUKiI_pGnAwopu1JqyikGe09wx3t2m"
+
+# Function to download files from Google Drive
+def download_from_drive(file_id, dest_path):
+    url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    response = requests.get(url, stream=True)
+    
+    if response.status_code == 200:
+        with open(dest_path, "wb") as f:
+            for chunk in response.iter_content(1024):
+                f.write(chunk)
+        print(f"✅ Downloaded: {dest_path}")
+    else:
+        print(f"❌ Failed to download {dest_path}")
+
+# Download users.csv if not exists
+users_csv_path = "users.csv"
+if not os.path.exists(users_csv_path):
+    download_from_drive(USERS_CSV_ID, users_csv_path)
+
+# Download recommendation_model.json if not exists
+model_json_path = "recommendation_model.json"
+if not os.path.exists(model_json_path):
+    download_from_drive(MODEL_JSON_ID, model_json_path)
+
+# Load user metadata
+users_df = pd.read_csv(users_csv_path)
 
 # Label Encoding for categorical variables
 label_encoders = {}
@@ -28,11 +55,10 @@ for col in ["Gender", "Marital_Status", "Sect", "Caste", "State"]:
     users_df[col] = le.fit_transform(users_df[col])
     label_encoders[col] = le
 
-# Load trained XGBoost model (Handle missing file error)
-model_file = os.path.join(os.path.dirname(__file__), "recommendation_model.json")
+# Load trained XGBoost model
 bst = xgb.Booster()
-if os.path.exists(model_file):
-    bst.load_model(model_file)
+if os.path.exists(model_json_path):
+    bst.load_model(model_json_path)
 else:
     bst = None  # Handle missing model scenario
 
@@ -69,7 +95,7 @@ def get_recommendations(member_id):
 
     # Ensure we have only the model's required features
     if bst is None:
-        return {"error": "Model file not found. Please upload `recommendation_model.json`."}
+        return {"error": "Model file not found. Please check `recommendation_model.json`."}
     
     model_features = bst.feature_names
     try:
